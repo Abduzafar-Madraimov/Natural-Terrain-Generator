@@ -14,8 +14,9 @@ pub struct TerrainParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TerrainDoc2D {
-    #[serde(rename = "_id")]
+    #[serde(rename = "_id", skip_serializing_if = "Option::is_none", default)]
     pub id: Option<ObjectId>,
+    pub name: String,
     pub seed: i64,
     pub params: TerrainParams,
     // Flattened row-major: length = size×size

@@ -9,6 +9,7 @@ bson = "2.4"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 core = { path = "../core" }
+futures-util  = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

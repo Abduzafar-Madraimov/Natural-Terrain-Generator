@@ -10,3 +10,4 @@ image = "0.25"
 core = { path = "../core" }
 storage= { path = "../storage" }
 tokio = { version = "1", features = ["rt"] }
+rfd = "0.15.4"

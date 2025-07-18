@@ -53,11 +53,18 @@ struct TerrainApp {
     last_flat: Option<Vec<u8>>,
     // Stores last size of the generated terrain
     last_size: usize,
+    // Last generated grid
+    last_grid: Option<core::utils::HeightMap2D>,
+
+    // Save name for terrain in DB
+    save_name: String,
+    load_list: Vec<String>,
+    selected_name: Option<String>,
 }
 
 impl Default for TerrainApp {
     fn default() -> Self {
-        Self {
+        let mut app = Self {
             exp: 7, // 2^7 + 1 = 129
             last_size: 129,
             seed: 2025,
@@ -75,6 +82,41 @@ impl Default for TerrainApp {
             talus_angle: 1.0,
             enable_warping: false,
             warp_strength: 0.5,
+            save_name: String::new(),
+            load_list: vec![],
+            selected_name: None,
+            last_grid: None,
+        };
+        // On startup, load the DB names
+        app.refresh_name_list();
+        app
+    }
+}
+
+impl TerrainApp {
+    // Helper to block-on list_names() and update `self.load_list` + status.
+    fn refresh_name_list(&mut self) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        match rt.block_on(Storage2D::init(
+            "mongodb://localhost:27017",
+            "terrain_db",
+            "terrain2d",
+        )) {
+            Ok(storage) => match rt.block_on(storage.list_names()) {
+                Ok(names) => {
+                    self.load_list = names;
+                    self.status_message = "Loaded name list".to_owned();
+                }
+                Err(e) => {
+                    self.status_message = format!("List error: {}", e);
+                }
+            },
+            Err(e) => {
+                self.status_message = format!("DB init error: {}", e);
+            }
         }
     }
 }
@@ -272,6 +314,8 @@ impl App for TerrainApp {
 
                 // Normalize only after erosion to avoid making erosion useless
                 normalize2(&mut grid); // normalize so heights are in [0,1]
+                // Save the last grid
+                self.last_grid = Some(grid.clone());
                 let flat = flatten2(&grid);
                 let img = to_terrain_image(&flat, size);
                 self.last_flat = Some(img.clone());
@@ -292,100 +336,147 @@ impl App for TerrainApp {
             // Save to PNG
             if ui.button("Save PNG…").clicked() {
                 if let Some(img) = &self.last_flat {
-                    let filename = format!("terrain_{}.png", self.seed);
-                    image::save_buffer(
-                        &filename,
-                        img,
-                        size as u32,
-                        size as u32,
-                        image::ColorType::Rgb8,
-                    )
-                    .unwrap();
-                    self.status_message = format!("Saved {}", filename);
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Save Terrain as PNG")
+                        .set_directory(".")
+                        .set_file_name(&format!("terrain_{}.png", self.save_name))
+                        .save_file()
+                    {
+                        image::save_buffer(
+                            &path,
+                            img,
+                            self.last_size as u32,
+                            self.last_size as u32,
+                            image::ColorType::Rgb8,
+                        )
+                        .unwrap();
+                        self.status_message = format!("Saved PNG to {}", path.display());
+                    }
                 }
             }
 
+            ui.label("Terrain Name:");
+            ui.text_edit_singleline(&mut self.save_name);
+
             // Save to DB
             if ui.button("Save to DB…").clicked() {
-                if let Some(tex) = &self.terrain_texture {
-                    // reuse same flatten pipeline
-                    let mut grid = Fractal2D::new(size, self.seed, self.roughness).generate();
-                    ThermalErosion2D::new(self.erosion_iters as usize, 1.0).apply(&mut grid);
-                    let flat = flatten2(&grid);
+                if let Some(grid) = &self.last_grid {
+                    // flatten the stored grid
+                    let flat = flatten2(grid);
                     let params = TerrainParams {
-                        noise_type: "fractal2d".into(),
-                        frequency: 0.0,
-                        persistence: 0.0,
-                        octaves: 0,
+                        noise_type: format!("{:?}", self.noise_type).to_lowercase(),
+                        frequency: self.frequency,
+                        persistence: self.persistence,
+                        octaves: self.octaves as usize,
                         roughness: Some(self.roughness),
                         erosion_iters: Some(self.erosion_iters),
-                        talus_angle: Some(1.0),
+                        talus_angle: Some(self.talus_angle as f32),
                     };
                     let doc = TerrainDoc2D {
                         id: None,
+                        name: self.save_name.clone(),
                         seed: self.seed as i64,
                         params,
-                        height_map: flat.clone(),
+                        height_map: flat,
                         dimensions: 2,
                     };
 
+                    let success = {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                        rt.block_on(Storage2D::init(
+                            "mongodb://localhost:27017",
+                            "terrain_db",
+                            "terrain2d",
+                        ))
+                        .and_then(|storage| rt.block_on(storage.create(doc)))
+                        .is_ok()
+                    };
+
+                    if success {
+                        self.status_message = "Saved to MongoDB".into();
+                        // 2) Immediately re‑load the name list:
+                        self.refresh_name_list();
+                    } else {
+                        self.status_message = "Failed to save to MongoDB".into();
+                    }
+                } else {
+                    self.status_message = "No terrain to save or name is empty".into();
+                }
+            }
+
+            // Load from DB
+            if ui.button("Refresh DB List").clicked() {
+                self.refresh_name_list();
+            }
+            // Draw ComboBox
+            ui.horizontal(|ui| {
+                ui.label("Load terrain:");
+                egui::ComboBox::from_label("")
+                    .selected_text(
+                        self.selected_name
+                            .as_ref()
+                            .map(|s| s.as_str())
+                            .unwrap_or("<none>"),
+                    )
+                    .show_ui(ui, |ui| {
+                        for name in &self.load_list {
+                            ui.selectable_value(&mut self.selected_name, Some(name.clone()), name);
+                        }
+                    });
+            });
+            // Add a “Load Selected” button
+            if ui.button("Load Selected").clicked() {
+                if let Some(name) = &self.selected_name {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .unwrap();
-
                     match rt.block_on(Storage2D::init(
                         "mongodb://localhost:27017",
                         "terrain_db",
                         "terrain2d",
                     )) {
-                        Ok(mut storage) => {
-                            let res = rt.block_on(storage.create(doc));
-                            self.status_message = if res.is_ok() {
-                                "Saved to MongoDB".into()
-                            } else {
-                                format!("DB error: {}", res.unwrap_err())
-                            };
-                        }
-                        Err(e) => {
-                            self.status_message = format!("DB init error: {}", e);
-                        }
-                    }
-                }
-            }
+                        Ok(storage) => match rt.block_on(storage.read_by_name(name)) {
+                            Ok(Some(doc)) => {
+                                // compute size from flattened length
+                                let len = doc.height_map.len();
+                                let size = (len as f64).sqrt() as usize;
+                                assert!(
+                                    size * size == len,
+                                    "stored height_map length must be square"
+                                );
+                                // update last_size and last_flat
+                                self.last_size = size;
+                                self.last_flat = Some(
+                                    doc.height_map
+                                        .clone()
+                                        .iter()
+                                        .map(|&v| (v * 255.0) as u8)
+                                        .collect(),
+                                );
 
-            // Load from DB
-            if ui.button("Load from DB…").clicked() {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                match rt.block_on(Storage2D::init(
-                    "mongodb://localhost:27017",
-                    "terrain_db",
-                    "terrain2d",
-                )) {
-                    Ok(mut storage) => {
-                        let found = rt.block_on(storage.read_by_seed(self.seed as i64)).unwrap();
-                        if let Some(doc) = found {
-                            // reconstruct texture
-                            let img = to_terrain_image(&doc.height_map, size);
-                            let color_image = ColorImage::from_rgb([size, size], &img);
-                            self.terrain_texture = Some(ctx.load_texture(
-                                "terrain",
-                                color_image,
-                                egui::TextureOptions::NEAREST,
-                            ));
-                            self.status_message = "Loaded from MongoDB".into();
-                        } else {
-                            self.status_message = "No entry for this seed".into();
-                        }
+                                // rebuild texture:
+                                let img = to_terrain_image(&doc.height_map, self.last_size);
+                                let color_image =
+                                    ColorImage::from_rgb([self.last_size, self.last_size], &img);
+                                self.terrain_texture = Some(ctx.load_texture(
+                                    "terrain",
+                                    color_image,
+                                    egui::TextureOptions::NEAREST,
+                                ));
+                                self.status_message = format!("Loaded “{}”", name);
+                            }
+                            Ok(None) => self.status_message = "Name not found".into(),
+                            Err(e) => self.status_message = format!("Read error: {}", e),
+                        },
+                        Err(e) => self.status_message = format!("DB init error: {}", e),
                     }
-                    Err(e) => {
-                        self.status_message = format!("DB init error: {}", e);
-                    }
+                } else {
+                    self.status_message = "No terrain selected".into();
                 }
-                ctx.request_repaint();
             }
 
             ui.separator();
