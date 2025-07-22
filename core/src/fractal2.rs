@@ -67,7 +67,7 @@ impl Fractal2D {
 
             // Square step
             for y in (0..self.size).step_by(half) {
-                for x in ((y + half)..self.size).step_by(step) {
+                for x in (0..self.size).step_by(step) {
                     let mut sum = 0.0;
                     let mut cnt = 0;
                     if x >= half {
@@ -92,7 +92,7 @@ impl Fractal2D {
             }
 
             step = half;
-            offset *= self.roughness as f32;
+            offset *= self.roughness.powf(1.5) as f32;
         }
 
         // Store it for get2()
@@ -104,8 +104,8 @@ impl Fractal2D {
 impl NoiseGenerator for Fractal2D {
     fn get2(&self, x: f64, y: f64) -> f64 {
         // Use bilinear sampling from a pre-generated map:
-        let fx = x * self.size as f64;
-        let fy = y * self.size as f64;
+        let fx = x * (self.size - 1) as f64;
+        let fy = y * (self.size - 1) as f64;
         let xi = fx.floor() as usize;
         let yi = fy.floor() as usize;
 

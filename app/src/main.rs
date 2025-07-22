@@ -334,7 +334,7 @@ impl App for TerrainApp {
             }
 
             // Save to PNG
-            if ui.button("Save PNG…").clicked() {
+            if ui.button("Save as PNG").clicked() {
                 if let Some(img) = &self.last_flat {
                     if let Some(path) = rfd::FileDialog::new()
                         .set_title("Save Terrain as PNG")
@@ -359,7 +359,11 @@ impl App for TerrainApp {
             ui.text_edit_singleline(&mut self.save_name);
 
             // Save to DB
-            if ui.button("Save to DB…").clicked() {
+            if ui.button("Save to Database").clicked() {
+                if self.save_name.trim().is_empty() {
+                    self.status_message = "Terrain is not stored \nTerrain name is required".into();
+                    return;
+                }
                 if let Some(grid) = &self.last_grid {
                     // flatten the stored grid
                     let flat = flatten2(grid);

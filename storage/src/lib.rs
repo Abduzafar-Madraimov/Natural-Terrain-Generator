@@ -46,7 +46,7 @@ impl Storage2D {
 
     // Insert a terrain document.
     pub async fn create(&self, doc_obj: TerrainDoc2D) -> mongodb::error::Result<()> {
-        // Delete any existing document with same seed+dimensions
+        // Delete any existing document with same name+seed+dimensions
         let filter = doc! {
             "name": &doc_obj.name,
             "seed": doc_obj.seed,

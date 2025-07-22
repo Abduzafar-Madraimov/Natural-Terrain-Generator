@@ -66,21 +66,19 @@ pub fn normalize2(map: &mut HeightMap2D) {
 
     for row in map.iter() {
         for &val in row.iter() {
-            if val < min {
-                min = val;
-            }
-            if val > max {
-                max = val;
-            }
+            min = min.min(val);
+            max = max.max(val);
         }
     }
 
-    let range = max - min;
-    if range > 0.0 {
-        for row in map.iter_mut() {
-            for val in row.iter_mut() {
-                *val = (*val - min) / range;
-            }
+    let range = (max - min).max(0.001); // prevent zero-division
+    for row in map.iter_mut() {
+        for val in row.iter_mut() {
+            // normalize
+            *val = (*val - min) / range;
+
+            // optional gamma curve for contrast boost
+            *val = val.powf(1.2); // tweakable: try 1.2–1.5
         }
     }
 }
