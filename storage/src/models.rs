@@ -10,6 +10,7 @@ pub struct TerrainParams {
     pub roughness: Option<f64>, // for fractal
     pub erosion_iters: Option<u32>,
     pub talus_angle: Option<f32>,
+    pub warp_strength: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

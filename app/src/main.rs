@@ -125,367 +125,493 @@ impl App for TerrainApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         // compute real size
         let size = (1 << self.exp) + 1;
+        const SPACE_LABEL: f32 = 5.0; // space between label and control
+        const SPACE_WIDGET: f32 = 8.0; // space between controls
+        const SPACE_RIGHT: f32 = 16.0; // padding from the right edge
+        let total_width = ctx.available_rect().width();
+        let panel_width = total_width * 0.4;
 
-        egui::SidePanel::left("controls").show(ctx, |ui| {
-            ui.heading("Terrain Generator");
-            ui.separator();
+        egui::SidePanel::left("controls")
+            .resizable(false) // optional: lock panel width
+            .min_width(panel_width) // force exact size
+            .max_width(panel_width) // prevent stretching
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Terrain Generator");
+                    ui.separator();
 
-            // Noise type selector
-            ui.label("Noise Type");
-            egui::ComboBox::from_label("Noise Algorithm")
-                .selected_text(format!("{:?}", self.noise_type))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.noise_type, NoiseType::Fractal2D, "Fractal2D");
-                    ui.selectable_value(&mut self.noise_type, NoiseType::Perlin2D, "Perlin2D");
-                    ui.selectable_value(&mut self.noise_type, NoiseType::Simplex2D, "Simplex2D");
-                });
+                    // Noise Parameters
+                    egui::CollapsingHeader::new("Noise Parameters")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            // Seed
+                            ui.label("Seed");
+                            ui.add_space(SPACE_LABEL);
+                            ui.add(egui::DragValue::new(&mut self.seed).speed(1.0));
+                            ui.add_space(SPACE_WIDGET);
 
-            // Resolution slider
-            let prev_size = (1 << self.exp) + 1;
-            ui.horizontal(|ui| {
-                ui.label("Resolution 2^n+1:");
-                ui.add(
-                    egui::Slider::new(&mut self.exp, 6..=9)
-                        .text(format!("{}×{}", size, size))
-                        .step_by(1.0),
-                );
-                if prev_size != size {
-                    self.terrain_texture = None; // reset texture on size change
-                    self.last_flat = None;
-                    self.status_message = "Texture reset due to size change".into();
-                }
-            });
-
-            // Seed
-            ui.label("Seed");
-            ui.add(egui::DragValue::new(&mut self.seed).speed(1.0));
-
-            match self.noise_type {
-                NoiseType::Fractal2D => {
-                    ui.label("Roughness");
-                    ui.add(egui::Slider::new(&mut self.roughness, 0.1..=5.0));
-                }
-                _ => {
-                    ui.label("Frequency");
-                    ui.add(egui::Slider::new(&mut self.frequency, 0.1..=10.0));
-
-                    ui.label("Persistence");
-                    ui.add(egui::Slider::new(&mut self.persistence, 0.0..=1.0));
-
-                    ui.label("Octaves");
-                    ui.add(egui::Slider::new(&mut self.octaves, 1..=8));
-                }
-            }
-
-            // Domain warping
-            if self.noise_type == NoiseType::Fractal2D {
-                self.enable_warping = false; // Disable forcibly
-                ui.add_enabled(
-                    false,
-                    egui::Checkbox::new(&mut self.enable_warping, "Enable Domain Warping"),
-                );
-                ui.label("Domain warping not supported for Fractal2D");
-            } else {
-                ui.checkbox(&mut self.enable_warping, "Enable Domain Warping");
-                if self.enable_warping {
-                    ui.add(
-                        egui::Slider::new(&mut self.warp_strength, 0.0..=1.0).text("Warp Strength"),
-                    );
-                }
-            }
-
-            // Erosion
-            if self.noise_type != NoiseType::Fractal2D {
-                self.enable_erosion = false;
-                ui.add_enabled(
-                    false,
-                    egui::Checkbox::new(&mut self.enable_erosion, "Apply Erosion"),
-                );
-                ui.label("Erosion only supported for Fractal2D");
-            } else {
-                ui.checkbox(&mut self.enable_erosion, "Apply Erosion");
-                if self.enable_erosion {
-                    ui.label("Erosion Iterations");
-                    ui.add(egui::Slider::new(&mut self.erosion_iters, 0..=50));
-                    ui.label("Talus Angle");
-                    ui.add(egui::Slider::new(&mut self.talus_angle, 0.1..=5.0));
-                }
-            }
-
-            ui.separator();
-
-            // Generate & measure
-            if ui.button("Generate Terrain").clicked() {
-                let start = Instant::now();
-
-                // Base Generator
-                let mut fractal_base = Fractal2D::new(size, self.seed, self.roughness);
-                let mut grid = match self.noise_type {
-                    NoiseType::Fractal2D => {
-                        let base = {
-                            let _ = fractal_base.generate(); // fill internal map
-                            &fractal_base
-                        };
-
-                        if self.enable_warping {
-                            let mut fractal_warp =
-                                Fractal2D::new(size, self.seed.wrapping_add(42), self.roughness);
-                            let _ = fractal_warp.generate();
-                            DomainWarp2D {
-                                base,
-                                warp: &fractal_warp,
-                                size,
-                                warp_strength: self.warp_strength,
+                            // Resolution slider
+                            let prev_size = (1 << self.exp) + 1;
+                            // ui.horizontal(|ui| {
+                            ui.label("Resolution (2^n+1):");
+                            ui.add_space(SPACE_LABEL);
+                            // Stretch slider across entire panel width
+                            ui.add_sized(
+                                [ui.available_width(), 0.0],
+                                egui::Slider::new(&mut self.exp, 6..=9)
+                                    .text(format!("{}×{}", size, size))
+                                    .step_by(1.0),
+                            );
+                            if prev_size != size {
+                                self.terrain_texture = None; // reset texture on size change
+                                self.last_flat = None;
+                                self.status_message = "Texture reset due to size change".into();
                             }
-                            .generate()
-                        } else {
-                            let mut g = vec![vec![0.0; size]; size];
-                            for y in 0..size {
-                                for x in 0..size {
-                                    let fx = x as f64 / size as f64;
-                                    let fy = y as f64 / size as f64;
-                                    g[y][x] = base.get2(fx, fy) as f32;
+                            // });
+                            ui.add_space(SPACE_WIDGET);
+
+                            // Noise type selector
+                            ui.label("Noise Type");
+                            ui.add_space(SPACE_LABEL); // Add a 5 px vertical space
+                            egui::ComboBox::from_id_salt("noise_type_combo")
+                                .selected_text(format!("{:?}", self.noise_type))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut self.noise_type,
+                                        NoiseType::Fractal2D,
+                                        "Fractal2D",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.noise_type,
+                                        NoiseType::Perlin2D,
+                                        "Perlin2D",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.noise_type,
+                                        NoiseType::Simplex2D,
+                                        "Simplex2D",
+                                    );
+                                });
+                            ui.add_space(SPACE_WIDGET);
+
+                            // Parameters based on noise type
+                            match self.noise_type {
+                                NoiseType::Fractal2D => {
+                                    ui.label("Roughness");
+                                    ui.add_space(SPACE_LABEL);
+                                    ui.add(egui::Slider::new(&mut self.roughness, 0.1..=5.0));
+                                }
+                                _ => {
+                                    ui.label("Frequency");
+                                    ui.add_space(SPACE_LABEL);
+                                    ui.add(egui::Slider::new(&mut self.frequency, 0.1..=10.0));
+
+                                    ui.label("Persistence");
+                                    ui.add_space(SPACE_LABEL);
+                                    ui.add(egui::Slider::new(&mut self.persistence, 0.0..=1.0));
+
+                                    ui.label("Octaves");
+                                    ui.add_space(SPACE_LABEL);
+                                    ui.add(egui::Slider::new(&mut self.octaves, 1..=8));
                                 }
                             }
-                            g
-                        }
-                    }
+                        });
+                    ui.add_space(SPACE_WIDGET);
 
-                    NoiseType::Perlin2D | NoiseType::Simplex2D => {
-                        let base: Box<dyn NoiseGenerator> = match self.noise_type {
-                            NoiseType::Perlin2D => Box::new(Perlin2D::new(
-                                self.seed,
-                                self.frequency,
-                                self.persistence,
-                                self.octaves as usize,
-                            )),
-                            NoiseType::Simplex2D => Box::new(Simplex2D::new(
-                                self.seed,
-                                self.frequency,
-                                self.persistence,
-                                self.octaves as usize,
-                            )),
-                            _ => unreachable!(),
-                        };
-
-                        if self.enable_warping {
-                            let warp: Box<dyn NoiseGenerator> = match self.noise_type {
-                                NoiseType::Perlin2D => Box::new(Perlin2D::new(
-                                    self.seed.wrapping_add(42),
-                                    self.frequency,
-                                    self.persistence,
-                                    self.octaves as usize,
-                                )),
-                                NoiseType::Simplex2D => Box::new(Simplex2D::new(
-                                    self.seed.wrapping_add(42),
-                                    self.frequency,
-                                    self.persistence,
-                                    self.octaves as usize,
-                                )),
-                                _ => unreachable!(),
-                            };
-
-                            DomainWarp2D {
-                                base: base.as_ref(),
-                                warp: warp.as_ref(),
-                                size,
-                                warp_strength: self.warp_strength,
-                            }
-                            .generate()
-                        } else {
-                            let mut g = vec![vec![0.0; size]; size];
-                            for y in 0..size {
-                                for x in 0..size {
-                                    let fx = x as f64 / size as f64;
-                                    let fy = y as f64 / size as f64;
-                                    g[y][x] = base.get2(fx, fy) as f32;
+                    // Domain warping
+                    egui::CollapsingHeader::new("Domain warping")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if self.noise_type == NoiseType::Fractal2D {
+                                self.enable_warping = false; // Disable forcibly
+                                ui.add_enabled(
+                                    false,
+                                    egui::Checkbox::new(
+                                        &mut self.enable_warping,
+                                        "Enable Domain Warping",
+                                    ),
+                                );
+                                ui.label("Domain warping not supported for Fractal2D");
+                            } else {
+                                ui.checkbox(&mut self.enable_warping, "Enable Domain Warping");
+                                if self.enable_warping {
+                                    ui.add(
+                                        egui::Slider::new(&mut self.warp_strength, 0.0..=1.0)
+                                            .text("Warp Strength"),
+                                    );
                                 }
                             }
-                            g
+                        });
+
+                    // Erosion
+                    egui::CollapsingHeader::new("Erosion")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            if self.noise_type != NoiseType::Fractal2D {
+                                self.enable_erosion = false;
+                                ui.add_enabled(
+                                    false,
+                                    egui::Checkbox::new(&mut self.enable_erosion, "Apply Erosion"),
+                                );
+                                ui.label("Erosion only supported for Fractal2D");
+                            } else {
+                                ui.checkbox(&mut self.enable_erosion, "Apply Erosion");
+                                if self.enable_erosion {
+                                    ui.label("Erosion Iterations");
+                                    ui.add(egui::Slider::new(&mut self.erosion_iters, 0..=50));
+                                    ui.label("Talus Angle");
+                                    ui.add(egui::Slider::new(&mut self.talus_angle, 0.1..=5.0));
+                                }
+                            }
+                        });
+
+                    ui.separator();
+
+                    // Generate & measure
+                    if ui.button("Generate Terrain").clicked() {
+                        let start = Instant::now();
+
+                        // Base Generator
+                        let mut fractal_base = Fractal2D::new(size, self.seed, self.roughness);
+                        let mut grid = match self.noise_type {
+                            NoiseType::Fractal2D => {
+                                let base = {
+                                    let _ = fractal_base.generate(); // fill internal map
+                                    &fractal_base
+                                };
+
+                                if self.enable_warping {
+                                    let mut fractal_warp = Fractal2D::new(
+                                        size,
+                                        self.seed.wrapping_add(42),
+                                        self.roughness,
+                                    );
+                                    let _ = fractal_warp.generate();
+                                    DomainWarp2D {
+                                        base,
+                                        warp: &fractal_warp,
+                                        size,
+                                        warp_strength: self.warp_strength,
+                                    }
+                                    .generate()
+                                } else {
+                                    let mut g = vec![vec![0.0; size]; size];
+                                    for y in 0..size {
+                                        for x in 0..size {
+                                            let fx = x as f64 / size as f64;
+                                            let fy = y as f64 / size as f64;
+                                            g[y][x] = base.get2(fx, fy) as f32;
+                                        }
+                                    }
+                                    g
+                                }
+                            }
+
+                            NoiseType::Perlin2D | NoiseType::Simplex2D => {
+                                let base: Box<dyn NoiseGenerator> = match self.noise_type {
+                                    NoiseType::Perlin2D => Box::new(Perlin2D::new(
+                                        self.seed,
+                                        self.frequency,
+                                        self.persistence,
+                                        self.octaves as usize,
+                                    )),
+                                    NoiseType::Simplex2D => Box::new(Simplex2D::new(
+                                        self.seed,
+                                        self.frequency,
+                                        self.persistence,
+                                        self.octaves as usize,
+                                    )),
+                                    _ => unreachable!(),
+                                };
+
+                                if self.enable_warping {
+                                    let warp: Box<dyn NoiseGenerator> = match self.noise_type {
+                                        NoiseType::Perlin2D => Box::new(Perlin2D::new(
+                                            self.seed.wrapping_add(42),
+                                            self.frequency,
+                                            self.persistence,
+                                            self.octaves as usize,
+                                        )),
+                                        NoiseType::Simplex2D => Box::new(Simplex2D::new(
+                                            self.seed.wrapping_add(42),
+                                            self.frequency,
+                                            self.persistence,
+                                            self.octaves as usize,
+                                        )),
+                                        _ => unreachable!(),
+                                    };
+
+                                    DomainWarp2D {
+                                        base: base.as_ref(),
+                                        warp: warp.as_ref(),
+                                        size,
+                                        warp_strength: self.warp_strength,
+                                    }
+                                    .generate()
+                                } else {
+                                    let mut g = vec![vec![0.0; size]; size];
+                                    for y in 0..size {
+                                        for x in 0..size {
+                                            let fx = x as f64 / size as f64;
+                                            let fy = y as f64 / size as f64;
+                                            g[y][x] = base.get2(fx, fy) as f32;
+                                        }
+                                    }
+                                    g
+                                }
+                            }
+                        };
+
+                        // Apply thermal erosion
+                        if self.enable_erosion {
+                            ThermalErosion2D::new(
+                                self.erosion_iters as usize,
+                                self.talus_angle as f32,
+                            )
+                            .apply(&mut grid);
                         }
+
+                        // Normalize only after erosion to avoid making erosion useless
+                        normalize2(&mut grid); // normalize so heights are in [0,1]
+                        // Save the last grid
+                        self.last_grid = Some(grid.clone());
+                        let flat = flatten2(&grid);
+                        let img = to_terrain_image(&flat, size);
+                        self.last_flat = Some(img.clone());
+                        // Keep size in sync with flat
+                        self.last_size = size;
+                        let color_image = ColorImage::from_rgb([size, size], &img);
+                        self.terrain_texture = Some(ctx.load_texture(
+                            "terrain",
+                            color_image,
+                            egui::TextureOptions::NEAREST,
+                        ));
+                        self.last_duration = Some(start.elapsed().as_secs_f32() * 1000.0);
+                        self.status_message = format!(
+                            "Generated in {:.2} ms (seed {})",
+                            self.last_duration.unwrap(),
+                            self.seed
+                        );
+                        ctx.request_repaint();
                     }
-                };
+                    ui.add_space(SPACE_WIDGET);
 
-                // Apply thermal erosion
-                if self.enable_erosion {
-                    ThermalErosion2D::new(self.erosion_iters as usize, self.talus_angle as f32)
-                        .apply(&mut grid);
-                }
+                    // Terrain name and save options
+                    ui.label("Terrain Name:");
+                    ui.add_space(SPACE_LABEL);
+                    ui.text_edit_singleline(&mut self.save_name);
+                    ui.add_space(SPACE_WIDGET);
 
-                // Normalize only after erosion to avoid making erosion useless
-                normalize2(&mut grid); // normalize so heights are in [0,1]
-                // Save the last grid
-                self.last_grid = Some(grid.clone());
-                let flat = flatten2(&grid);
-                let img = to_terrain_image(&flat, size);
-                self.last_flat = Some(img.clone());
-                // Keep size in sync with flat
-                self.last_size = size;
-                let color_image = ColorImage::from_rgb([size, size], &img);
-                self.terrain_texture =
-                    Some(ctx.load_texture("terrain", color_image, egui::TextureOptions::NEAREST));
-                self.last_duration = Some(start.elapsed().as_secs_f32() * 1000.0);
-                self.status_message = format!(
-                    "Generated in {:.2} ms (seed {})",
-                    self.last_duration.unwrap(),
-                    self.seed
-                );
-                ctx.request_repaint();
-            }
-
-            // Save to PNG
-            if ui.button("Save as PNG").clicked() {
-                if let Some(img) = &self.last_flat {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Save Terrain as PNG")
-                        .set_directory(".")
-                        .set_file_name(&format!("terrain_{}.png", self.save_name))
-                        .save_file()
-                    {
-                        image::save_buffer(
-                            &path,
-                            img,
-                            self.last_size as u32,
-                            self.last_size as u32,
-                            image::ColorType::Rgb8,
-                        )
-                        .unwrap();
-                        self.status_message = format!("Saved PNG to {}", path.display());
-                    }
-                }
-            }
-
-            ui.label("Terrain Name:");
-            ui.text_edit_singleline(&mut self.save_name);
-
-            // Save to DB
-            if ui.button("Save to Database").clicked() {
-                if self.save_name.trim().is_empty() {
-                    self.status_message = "Terrain is not stored \nTerrain name is required".into();
-                    return;
-                }
-                if let Some(grid) = &self.last_grid {
-                    // flatten the stored grid
-                    let flat = flatten2(grid);
-                    let params = TerrainParams {
-                        noise_type: format!("{:?}", self.noise_type).to_lowercase(),
-                        frequency: self.frequency,
-                        persistence: self.persistence,
-                        octaves: self.octaves as usize,
-                        roughness: Some(self.roughness),
-                        erosion_iters: Some(self.erosion_iters),
-                        talus_angle: Some(self.talus_angle as f32),
-                    };
-                    let doc = TerrainDoc2D {
-                        id: None,
-                        name: self.save_name.clone(),
-                        seed: self.seed as i64,
-                        params,
-                        height_map: flat,
-                        dimensions: 2,
-                    };
-
-                    let success = {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .unwrap();
-                        rt.block_on(Storage2D::init(
-                            "mongodb://localhost:27017",
-                            "terrain_db",
-                            "terrain2d",
-                        ))
-                        .and_then(|storage| rt.block_on(storage.create(doc)))
-                        .is_ok()
-                    };
-
-                    if success {
-                        self.status_message = "Saved to MongoDB".into();
-                        // 2) Immediately re‑load the name list:
-                        self.refresh_name_list();
-                    } else {
-                        self.status_message = "Failed to save to MongoDB".into();
-                    }
-                } else {
-                    self.status_message = "No terrain to save or name is empty".into();
-                }
-            }
-
-            // Load from DB
-            if ui.button("Refresh DB List").clicked() {
-                self.refresh_name_list();
-            }
-            // Draw ComboBox
-            ui.horizontal(|ui| {
-                ui.label("Load terrain:");
-                egui::ComboBox::from_label("")
-                    .selected_text(
-                        self.selected_name
-                            .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or("<none>"),
-                    )
-                    .show_ui(ui, |ui| {
-                        for name in &self.load_list {
-                            ui.selectable_value(&mut self.selected_name, Some(name.clone()), name);
+                    ui.horizontal(|ui| {
+                        // Save to PNG
+                        if ui.button("Save as PNG").clicked() {
+                            if let Some(img) = &self.last_flat {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .set_title("Save Terrain as PNG")
+                                    .set_directory(".")
+                                    .set_file_name(&format!("terrain_{}.png", self.save_name))
+                                    .save_file()
+                                {
+                                    image::save_buffer(
+                                        &path,
+                                        img,
+                                        self.last_size as u32,
+                                        self.last_size as u32,
+                                        image::ColorType::Rgb8,
+                                    )
+                                    .unwrap();
+                                    self.status_message =
+                                        format!("Saved PNG to {}", path.display());
+                                }
+                            }
                         }
+                        ui.add_space(SPACE_WIDGET);
+
+                        // Save to DB
+                        // Spacer to push the second button to the right
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(SPACE_RIGHT);
+                            if ui.button("Save to Database").clicked() {
+                                if self.save_name.trim().is_empty() {
+                                    self.status_message =
+                                        "Terrain is not stored \nTerrain name is required".into();
+                                    return;
+                                }
+                                if let Some(grid) = &self.last_grid {
+                                    // flatten the stored grid
+                                    let flat = flatten2(grid);
+                                    let params = TerrainParams {
+                                        noise_type: format!("{:?}", self.noise_type).to_lowercase(),
+                                        frequency: self.frequency,
+                                        persistence: self.persistence,
+                                        octaves: self.octaves as usize,
+                                        roughness: Some(self.roughness),
+                                        erosion_iters: Some(self.erosion_iters),
+                                        talus_angle: Some(self.talus_angle as f32),
+                                        warp_strength: Some(self.warp_strength),
+                                    };
+                                    let doc = TerrainDoc2D {
+                                        id: None,
+                                        name: self.save_name.clone(),
+                                        seed: self.seed as i64,
+                                        params,
+                                        height_map: flat,
+                                        dimensions: 2,
+                                    };
+
+                                    let success = {
+                                        let rt = tokio::runtime::Builder::new_current_thread()
+                                            .enable_all()
+                                            .build()
+                                            .unwrap();
+                                        rt.block_on(Storage2D::init(
+                                            "mongodb://localhost:27017",
+                                            "terrain_db",
+                                            "terrain2d",
+                                        ))
+                                        .and_then(|storage| rt.block_on(storage.create(doc)))
+                                        .is_ok()
+                                    };
+
+                                    if success {
+                                        self.status_message = "Saved to MongoDB".into();
+                                        // 2) Immediately re‑load the name list:
+                                        self.refresh_name_list();
+                                    } else {
+                                        self.status_message = "Failed to save to MongoDB".into();
+                                    }
+                                } else {
+                                    self.status_message =
+                                        "No terrain to save or name is empty".into();
+                                }
+                            }
+                        });
                     });
-            });
-            // Add a “Load Selected” button
-            if ui.button("Load Selected").clicked() {
-                if let Some(name) = &self.selected_name {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap();
-                    match rt.block_on(Storage2D::init(
-                        "mongodb://localhost:27017",
-                        "terrain_db",
-                        "terrain2d",
-                    )) {
-                        Ok(storage) => match rt.block_on(storage.read_by_name(name)) {
-                            Ok(Some(doc)) => {
-                                // compute size from flattened length
-                                let len = doc.height_map.len();
-                                let size = (len as f64).sqrt() as usize;
-                                assert!(
-                                    size * size == len,
-                                    "stored height_map length must be square"
-                                );
-                                // update last_size and last_flat
-                                self.last_size = size;
-                                self.last_flat = Some(
-                                    doc.height_map
-                                        .clone()
-                                        .iter()
-                                        .map(|&v| (v * 255.0) as u8)
-                                        .collect(),
-                                );
+                    ui.add_space(SPACE_WIDGET);
 
-                                // rebuild texture:
-                                let img = to_terrain_image(&doc.height_map, self.last_size);
-                                let color_image =
-                                    ColorImage::from_rgb([self.last_size, self.last_size], &img);
-                                self.terrain_texture = Some(ctx.load_texture(
-                                    "terrain",
-                                    color_image,
-                                    egui::TextureOptions::NEAREST,
-                                ));
-                                self.status_message = format!("Loaded “{}”", name);
-                            }
-                            Ok(None) => self.status_message = "Name not found".into(),
-                            Err(e) => self.status_message = format!("Read error: {}", e),
-                        },
-                        Err(e) => self.status_message = format!("DB init error: {}", e),
+                    // Load from DB
+                    if ui.button("Refresh DB List").clicked() {
+                        self.refresh_name_list();
                     }
-                } else {
-                    self.status_message = "No terrain selected".into();
-                }
-            }
+                    ui.add_space(SPACE_WIDGET);
+                    // Draw ComboBox
+                    ui.horizontal(|ui| {
+                        ui.label("Load terrain:");
+                        ui.add_space(SPACE_LABEL);
+                        egui::ComboBox::from_label("")
+                            .selected_text(
+                                self.selected_name
+                                    .as_ref()
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("<none>"),
+                            )
+                            .show_ui(ui, |ui| {
+                                for name in &self.load_list {
+                                    ui.selectable_value(
+                                        &mut self.selected_name,
+                                        Some(name.clone()),
+                                        name,
+                                    );
+                                }
+                            });
+                    });
+                    ui.add_space(SPACE_WIDGET);
+                    // Add a “Load Selected” button
+                    if ui.button("Load Selected").clicked() {
+                        if let Some(name) = &self.selected_name {
+                            let rt = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap();
+                            match rt.block_on(Storage2D::init(
+                                "mongodb://localhost:27017",
+                                "terrain_db",
+                                "terrain2d",
+                            )) {
+                                Ok(storage) => match rt.block_on(storage.read_by_name(name)) {
+                                    Ok(Some(doc)) => {
+                                        // compute size from flattened length
+                                        let len = doc.height_map.len();
+                                        let size = (len as f64).sqrt() as usize;
+                                        assert!(
+                                            size * size == len,
+                                            "stored height_map length must be square"
+                                        );
+                                        // update last_size and last_flat
+                                        self.last_size = size;
+                                        self.last_flat = Some(
+                                            doc.height_map
+                                                .clone()
+                                                .iter()
+                                                .map(|&v| (v * 255.0) as u8)
+                                                .collect(),
+                                        );
 
-            ui.separator();
-            ui.label(&self.status_message);
-        });
+                                        // rebuild texture:
+                                        let img = to_terrain_image(&doc.height_map, self.last_size);
+                                        let color_image = ColorImage::from_rgb(
+                                            [self.last_size, self.last_size],
+                                            &img,
+                                        );
+                                        self.terrain_texture = Some(ctx.load_texture(
+                                            "terrain",
+                                            color_image,
+                                            egui::TextureOptions::NEAREST,
+                                        ));
+                                        self.status_message = format!("Loaded “{}”", name);
+
+                                        // Sync configuration with loaded terrain parameters
+                                        let params = &doc.params;
+                                        self.seed = doc.seed as u64;
+                                        self.save_name = doc.name.clone();
+                                        // Update resolution exponent based on map size
+                                        self.exp = match size {
+                                            129 => 7,
+                                            257 => 8,
+                                            513 => 9,
+                                            _ => self.exp, // fallback to current if unknown
+                                        };
+                                        // Update noise type
+                                        self.noise_type = match params.noise_type.as_str() {
+                                            "fractal2d" => NoiseType::Fractal2D,
+                                            "perlin2d" => NoiseType::Perlin2D,
+                                            "simplex2d" => NoiseType::Simplex2D,
+                                            _ => self.noise_type,
+                                        };
+                                        // Common parameters
+                                        self.frequency = params.frequency;
+                                        self.persistence = params.persistence;
+                                        self.octaves = params.octaves as u32;
+                                        self.roughness = params.roughness.unwrap_or(self.roughness);
+                                        // Erosion
+                                        self.erosion_iters =
+                                            params.erosion_iters.unwrap_or(self.erosion_iters);
+                                        self.talus_angle =
+                                            params.talus_angle.unwrap_or(self.talus_angle as f32)
+                                                as f64;
+                                        self.enable_erosion =
+                                            self.noise_type == NoiseType::Fractal2D;
+                                        // Domain Warping
+                                        self.warp_strength =
+                                            params.warp_strength.unwrap_or(self.warp_strength);
+                                        self.enable_warping =
+                                            self.noise_type != NoiseType::Fractal2D;
+                                    }
+                                    Ok(None) => self.status_message = "Name not found".into(),
+                                    Err(e) => self.status_message = format!("Read error: {}", e),
+                                },
+                                Err(e) => self.status_message = format!("DB init error: {}", e),
+                            }
+                        } else {
+                            self.status_message = "No terrain selected".into();
+                        }
+                    }
+                    ui.add_space(SPACE_WIDGET);
+
+                    ui.separator();
+                    ui.label(&self.status_message);
+                });
+            });
 
         // central display
         egui::CentralPanel::default().show(ctx, |ui| {
