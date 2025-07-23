@@ -3,14 +3,13 @@ pub mod domain_warp;
 pub mod erosion2;
 pub mod fractal2;
 pub mod perlin2;
-pub mod perlin3;
 pub mod simplex2;
 pub mod utils;
 
+pub use domain_warp::DomainWarp2D;
 pub use erosion2::ThermalErosion2D;
 pub use fractal2::Fractal2D;
 pub use perlin2::Perlin2D;
-pub use perlin3::Perlin3D;
 pub use simplex2::Simplex2D;
 pub use utils::flatten2;
 
@@ -19,12 +18,12 @@ pub use utils::flatten2;
 // 3D‐only implementations override `get3(...)`.
 pub trait NoiseGenerator {
     // Sample 2D noise at (x, y).
-    fn get2(&self, x: f64, y: f64) -> f64 {
+    fn get2(&self, _x: f64, _y: f64) -> f64 {
         panic!("get2 not implemented for this generator");
     }
 
     // Sample 3D noise at (x, y, z).
-    fn get3(&self, x: f64, y: f64, z: f64) -> f64 {
+    fn get3(&self, _x: f64, _y: f64, _z: f64) -> f64 {
         panic!("get3 not implemented for this generator");
     }
 }

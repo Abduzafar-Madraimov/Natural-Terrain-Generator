@@ -1,62 +1,129 @@
-// bench holds Criterion benchmarks (binary crate)
+use core::{
+    DomainWarp2D, Fractal2D, NoiseGenerator, Perlin2D, Simplex2D, ThermalErosion2D,
+    utils::{HeightMap2D, flatten2, normalize2, to_terrain_image},
+};
+use criterion::{Criterion, criterion_group, criterion_main};
 
-use core::{Fractal2D, NoiseGenerator, Perlin2D, Perlin3D, Simplex2D, ThermalErosion2D};
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+const SIZE: usize = 257;
+const SEED: u64 = 2025;
 
-// Benchmark a single Perlin2D point sample
-fn bench_perlin2_point(c: &mut Criterion) {
-    let p2 = Perlin2D::new(42, 4.0, 0.5, 4);
-    c.bench_function("Perlin2D single point", |b| {
-        b.iter(|| black_box(p2.get2(0.123, 0.456)))
-    });
-}
-
-// Benchmark a single Simplex2D point sample
-fn bench_simplex2_point(c: &mut Criterion) {
-    let s2 = Simplex2D::new(42, 4.0, 0.5, 4);
-    c.bench_function("Simplex2D single point", |b| {
-        b.iter(|| black_box(s2.get2(0.123, 0.456)))
-    });
-}
-
-// Benchmark a single Perlin3D point sample
-fn bench_perlin3_point(c: &mut Criterion) {
-    let p3 = Perlin3D::new(42, 4.0, 0.5, 4);
-    c.bench_function("Perlin3D single point", |b| {
-        b.iter(|| black_box(p3.get3(0.123, 0.456, 0.789)))
-    });
-}
-
-/// Benchmark a full 257×257 fractal generation
-fn bench_fractal2_full(c: &mut Criterion) {
-    c.bench_function("Fractal2D 257×257", |b| {
+fn bench_fractal_pipeline(c: &mut Criterion) {
+    c.bench_function("Fractal2D + normalize + flatten + image", |b| {
         b.iter(|| {
-            let f = Fractal2D::new(257, 2025, 1.0);
-            black_box(f.generate());
+            let mut f = Fractal2D::new(SIZE, SEED, 1.0);
+            let mut map = f.generate();
+            normalize2(&mut map);
+            let flat = flatten2(&map);
+            let _img = to_terrain_image(&flat, SIZE);
         })
     });
 }
 
-// Benchmark fractal + 10× thermal erosion on 257×257
-fn bench_fractal2_plus_erosion(c: &mut Criterion) {
-    // Pre-generate a base map to avoid timing its creation each iter
-    let base = Fractal2D::new(257, 2025, 1.0).generate();
-    let er = ThermalErosion2D::new(10, 1.0);
-    c.bench_function("Fractal2D + erosion (10 iters)", |b| {
+fn bench_fractal_with_erosion(c: &mut Criterion) {
+    c.bench_function(
+        "Fractal2D + erosion (5 iters) + normalize + flatten + image",
+        |b| {
+            b.iter(|| {
+                let mut f = Fractal2D::new(SIZE, SEED, 1.0);
+                let mut map = f.generate();
+                ThermalErosion2D::new(5, 1.0).apply(&mut map);
+                normalize2(&mut map);
+                let flat = flatten2(&map);
+                let _img = to_terrain_image(&flat, SIZE);
+            })
+        },
+    );
+}
+
+fn bench_perlin2_plain(c: &mut Criterion) {
+    c.bench_function("Perlin2D plain + normalize + flatten + image", |b| {
         b.iter(|| {
-            let mut clone = base.clone();
-            er.apply(&mut clone);
-            black_box(clone);
+            let perlin = Perlin2D::new(SEED, 4.0, 0.5, 4);
+            let mut map: HeightMap2D = (0..SIZE)
+                .map(|y| {
+                    (0..SIZE)
+                        .map(|x| perlin.get2(x as f64 / SIZE as f64, y as f64 / SIZE as f64) as f32)
+                        .collect()
+                })
+                .collect();
+            normalize2(&mut map);
+            let flat = flatten2(&map);
+            let _img = to_terrain_image(&flat, SIZE);
         })
     });
+}
+
+fn bench_perlin_with_warp(c: &mut Criterion) {
+    c.bench_function(
+        "Perlin2D + Domain Warp + normalize + flatten + image",
+        |b| {
+            b.iter(|| {
+                let base = Perlin2D::new(SEED, 4.0, 0.5, 4);
+                let warp = Perlin2D::new(SEED.wrapping_add(42), 4.0, 0.5, 4);
+                let mut map = DomainWarp2D {
+                    base: &base,
+                    warp: &warp,
+                    size: SIZE,
+                    warp_strength: 0.5,
+                }
+                .generate();
+                normalize2(&mut map);
+                let flat = flatten2(&map);
+                let _img = to_terrain_image(&flat, SIZE);
+            })
+        },
+    );
+}
+
+fn bench_simplex_plain(c: &mut Criterion) {
+    c.bench_function("Simplex2D generate + normalize + flatten + image", |b| {
+        b.iter(|| {
+            let simplex = Simplex2D::new(SEED, 4.0, 0.5, 4);
+            let mut map: HeightMap2D = (0..SIZE)
+                .map(|y| {
+                    (0..SIZE)
+                        .map(|x| {
+                            simplex.get2(x as f64 / SIZE as f64, y as f64 / SIZE as f64) as f32
+                        })
+                        .collect()
+                })
+                .collect();
+            normalize2(&mut map);
+            let flat = flatten2(&map);
+            let _img = to_terrain_image(&flat, SIZE);
+        })
+    });
+}
+
+fn bench_simplex_with_warp(c: &mut Criterion) {
+    c.bench_function(
+        "Simplex2D + Domain Warp + normalize + flatten + image",
+        |b| {
+            b.iter(|| {
+                let base = Simplex2D::new(SEED, 4.0, 0.5, 4);
+                let warp = Simplex2D::new(SEED.wrapping_add(42), 4.0, 0.5, 4);
+                let mut map = DomainWarp2D {
+                    base: &base,
+                    warp: &warp,
+                    size: SIZE,
+                    warp_strength: 0.5,
+                }
+                .generate();
+                normalize2(&mut map);
+                let flat = flatten2(&map);
+                let _img = to_terrain_image(&flat, SIZE);
+            })
+        },
+    );
 }
 
 criterion_group!(
-    benches,
-    bench_perlin2_point,
-    bench_simplex2_point,
-    bench_perlin3_point,
-    bench_fractal2_full,
-    bench_fractal2_plus_erosion
+    terrain_benchmarks,
+    bench_fractal_pipeline,
+    bench_fractal_with_erosion,
+    bench_perlin2_plain,
+    bench_perlin_with_warp,
+    bench_simplex_plain,
+    bench_simplex_with_warp
 );
-criterion_main!(benches);
+criterion_main!(terrain_benchmarks);

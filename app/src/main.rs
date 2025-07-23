@@ -6,10 +6,15 @@ use core::{
     utils::{flatten2, normalize2, to_terrain_image},
 };
 use eframe::{App, Frame, NativeOptions, egui, run_native};
-use egui::{ColorImage, TextureHandle, Vec2};
-use image::{ImageBuffer, Rgb};
+use egui::{ColorImage, TextureHandle};
 use storage::Storage2D;
 use storage::models::{TerrainDoc2D, TerrainParams};
+
+const SPACE_LABEL: f32 = 5.0; // space between label and control
+const SPACE_WIDGET: f32 = 8.0; // space between controls
+const SPACE_RIGHT: f32 = 16.0; // space from the right edge
+const MIN_EXP: u32 = 6;
+const MAX_EXP: u32 = 9;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum NoiseType {
@@ -125,9 +130,6 @@ impl App for TerrainApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         // compute real size
         let size = (1 << self.exp) + 1;
-        const SPACE_LABEL: f32 = 5.0; // space between label and control
-        const SPACE_WIDGET: f32 = 8.0; // space between controls
-        const SPACE_RIGHT: f32 = 16.0; // padding from the right edge
         let total_width = ctx.available_rect().width();
         let panel_width = total_width * 0.4;
 
@@ -158,7 +160,7 @@ impl App for TerrainApp {
                             // Stretch slider across entire panel width
                             ui.add_sized(
                                 [ui.available_width(), 0.0],
-                                egui::Slider::new(&mut self.exp, 6..=9)
+                                egui::Slider::new(&mut self.exp, MIN_EXP..=MAX_EXP)
                                     .text(format!("{}×{}", size, size))
                                     .step_by(1.0),
                             );
@@ -199,7 +201,7 @@ impl App for TerrainApp {
                                 NoiseType::Fractal2D => {
                                     ui.label("Roughness");
                                     ui.add_space(SPACE_LABEL);
-                                    ui.add(egui::Slider::new(&mut self.roughness, 0.1..=5.0));
+                                    ui.add(egui::Slider::new(&mut self.roughness, 1.0..=5.0));
                                 }
                                 _ => {
                                     ui.label("Frequency");
@@ -630,7 +632,7 @@ impl App for TerrainApp {
                 };
                 let hscale = 100.0;
                 let angle = std::f32::consts::FRAC_PI_4; // 45°
-                let (ca, sa) = (angle.cos(), angle.sin());
+                let (_ca, _sa) = (angle.cos(), angle.sin());
 
                 // Build mesh:
                 let mut verts = Vec::new();

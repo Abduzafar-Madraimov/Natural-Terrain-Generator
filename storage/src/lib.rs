@@ -2,10 +2,10 @@
 
 pub mod models;
 
-use crate::models::{TerrainDoc2D, TerrainParams};
-use bson::{Bson, doc};
+use crate::models::TerrainDoc2D;
+use bson::doc;
 use futures_util::stream::TryStreamExt;
-use mongodb::{Client, Collection, IndexModel, options::ClientOptions};
+use mongodb::{Client, Collection, options::ClientOptions};
 
 pub struct Storage2D {
     col: Collection<TerrainDoc2D>,
